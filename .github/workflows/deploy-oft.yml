@@ -1,0 +1,371 @@
+name: Deploy OFT (EVM + Solana)
+
+on:
+  workflow_dispatch:
+    inputs:
+      evm_private_key:
+        description: 'EVM private key (0x...) for Base Sepolia deployer'
+        required: true
+        type: string
+      solana_private_key:
+        description: 'Solana private key (base58 or JSON array) for Solana deployer'
+        required: true
+        type: string
+      token_name:
+        description: 'Token name'
+        required: false
+        default: 'MyOFT'
+        type: string
+      token_symbol:
+        description: 'Token symbol'
+        required: false
+        default: 'MOFT'
+        type: string
+      initial_supply:
+        description: 'Initial supply to mint on Solana (whole tokens)'
+        required: false
+        default: '1000000'
+        type: string
+      wire_chains:
+        description: 'Wire chains together after deploy (set peers + enforced options)'
+        required: false
+        default: 'true'
+        type: boolean
+
+jobs:
+  deploy-evm:
+    name: Deploy MyOFT on Base Sepolia
+    runs-on: ubuntu-latest
+    outputs:
+      evm_address: ${{ steps.deploy.outputs.evm_address }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Compile contracts
+        run: pnpm hardhat compile
+
+      - name: Deploy MyOFT to Base Sepolia
+        id: deploy
+        env:
+          PRIVATE_KEY: ${{ inputs.evm_private_key }}
+        run: |
+          # Update token name/symbol in deploy script if custom values provided
+          if [ "${{ inputs.token_name }}" != "MyOFT" ] || [ "${{ inputs.token_symbol }}" != "MOFT" ]; then
+            sed -i "s/'MyOFT' \/\/ name/'${{ inputs.token_name }}' \/\/ name/" deploy/MyOFT.ts
+            sed -i "s/'MOFT' \/\/ symbol/'${{ inputs.token_symbol }}' \/\/ symbol/" deploy/MyOFT.ts
+          fi
+
+          OUTPUT=$(pnpm hardhat lz:deploy --networks base-sepolia --ci 2>&1)
+          echo "$OUTPUT"
+
+          # Extract deployed address
+          ADDRESS=$(echo "$OUTPUT" | grep -oP '(?<=address: )0x[0-9a-fA-F]{40}' | tail -1)
+          echo "evm_address=$ADDRESS" >> $GITHUB_OUTPUT
+          echo "### Base Sepolia OFT deployed at: \`$ADDRESS\`" >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload EVM deployment artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: evm-deployments
+          path: deployments/
+
+  deploy-solana:
+    name: Deploy OFT on Solana Devnet
+    runs-on: ubuntu-latest
+    outputs:
+      oft_store: ${{ steps.deploy.outputs.oft_store }}
+      token_mint: ${{ steps.deploy.outputs.token_mint }}
+      program_id: ${{ steps.deploy.outputs.program_id }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Install Solana CLI
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
+
+      - name: Install Anchor CLI
+        run: |
+          cargo install --git https://github.com/coral-xyz/anchor avm --force
+          avm install 0.31.1
+          avm use 0.31.1
+        env:
+          CARGO_NET_GIT_FETCH_WITH_CLI: true
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Configure Solana keypair
+        run: |
+          mkdir -p ~/.config/solana
+          INPUT_KEY="${{ inputs.solana_private_key }}"
+
+          # Detect if base58 or JSON array
+          if echo "$INPUT_KEY" | grep -qE '^\['; then
+            echo "$INPUT_KEY" > ~/.config/solana/id.json
+          else
+            # Convert base58 to JSON array via node
+            node -e "
+              const bs58 = require('./node_modules/bs58');
+              const key = bs58.decode('$INPUT_KEY');
+              console.log(JSON.stringify(Array.from(key)));
+            " > ~/.config/solana/id.json
+          fi
+
+          solana config set --url devnet
+          echo "Deployer pubkey: $(solana-keygen pubkey)"
+
+      - name: Airdrop SOL for deployment
+        run: |
+          PUBKEY=$(solana-keygen pubkey)
+          solana airdrop 2 $PUBKEY --url devnet || true
+          sleep 5
+          solana airdrop 2 $PUBKEY --url devnet || true
+          echo "Balance: $(solana balance --url devnet)"
+
+      - name: Build Anchor program
+        run: anchor build
+
+      - name: Deploy OFT on Solana Devnet
+        id: deploy
+        env:
+          PRIVATE_KEY: ${{ inputs.evm_private_key }}
+        run: |
+          PROGRAM_ID=$(anchor keys list 2>/dev/null | grep -oP '[1-9A-HJ-NP-Za-km-z]{32,44}' | head -1)
+          echo "Program ID: $PROGRAM_ID"
+
+          OUTPUT=$(pnpm hardhat lz:oft:solana:create \
+            --eid 40168 \
+            --program-id "$PROGRAM_ID" \
+            --name "${{ inputs.token_name }}" \
+            --symbol "${{ inputs.token_symbol }}" \
+            --amount ${{ inputs.initial_supply }} \
+            --network solana-devnet 2>&1)
+          echo "$OUTPUT"
+
+          OFT_STORE=$(echo "$OUTPUT" | grep -oP '(?<=OFT Store: )[1-9A-HJ-NP-Za-km-z]{32,44}' | head -1)
+          TOKEN_MINT=$(echo "$OUTPUT" | grep -oP '(?<=Token Mint: )[1-9A-HJ-NP-Za-km-z]{32,44}' | head -1)
+
+          echo "oft_store=$OFT_STORE" >> $GITHUB_OUTPUT
+          echo "token_mint=$TOKEN_MINT" >> $GITHUB_OUTPUT
+          echo "program_id=$PROGRAM_ID" >> $GITHUB_OUTPUT
+
+          echo "### Solana Devnet OFT" >> $GITHUB_STEP_SUMMARY
+          echo "- **Program ID:** \`$PROGRAM_ID\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **OFT Store:** \`$OFT_STORE\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Token Mint:** \`$TOKEN_MINT\`" >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload Solana deployment artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: solana-deployments
+          path: |
+            deployments/
+            target/deploy/
+
+  wire-chains:
+    name: Wire EVM <-> Solana
+    runs-on: ubuntu-latest
+    needs: [deploy-evm, deploy-solana]
+    if: inputs.wire_chains == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Install Solana CLI
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
+
+      - name: Download deployment artifacts
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Configure Solana keypair
+        run: |
+          mkdir -p ~/.config/solana
+          INPUT_KEY="${{ inputs.solana_private_key }}"
+          if echo "$INPUT_KEY" | grep -qE '^\['; then
+            echo "$INPUT_KEY" > ~/.config/solana/id.json
+          else
+            node -e "
+              const bs58 = require('./node_modules/bs58');
+              const key = bs58.decode('$INPUT_KEY');
+              console.log(JSON.stringify(Array.from(key)));
+            " > ~/.config/solana/id.json
+          fi
+          solana config set --url devnet
+
+      - name: Wire chains (set peers + enforced options)
+        env:
+          PRIVATE_KEY: ${{ inputs.evm_private_key }}
+        run: |
+          pnpm hardhat lz:oapp:wire --oapp-config layerzero.config.ts --ci
+
+          echo "### Chains wired successfully" >> $GITHUB_STEP_SUMMARY
+          echo "EVM OFT \`${{ needs.deploy-evm.outputs.evm_address }}\` <-> Solana OFT Store \`${{ needs.deploy-solana.outputs.oft_store }}\`" >> $GITHUB_STEP_SUMMARY
+
+  update-frontend:
+    name: Update Frontend Constants & Deploy Pages
+    runs-on: ubuntu-latest
+    needs: [deploy-evm, deploy-solana]
+    if: always() && needs.deploy-evm.result == 'success' && needs.deploy-solana.result == 'success'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Update frontend constants
+        run: |
+          EVM_ADDR="${{ needs.deploy-evm.outputs.evm_address }}"
+          OFT_STORE="${{ needs.deploy-solana.outputs.oft_store }}"
+          TOKEN_MINT="${{ needs.deploy-solana.outputs.token_mint }}"
+          PROGRAM_ID="${{ needs.deploy-solana.outputs.program_id }}"
+
+          cat > frontend/src/lib/constants.ts << EOF
+          // ============================================================
+          // AUTO-GENERATED BY GITHUB ACTIONS - DO NOT EDIT MANUALLY
+          // ============================================================
+
+          // Solana OFT Program ID
+          export const SOLANA_OFT_PROGRAM_ID = "$PROGRAM_ID";
+
+          // Solana OFT Store address
+          export const SOLANA_OFT_STORE = "$OFT_STORE";
+
+          // Solana Token Mint address
+          export const SOLANA_TOKEN_MINT = "$TOKEN_MINT";
+
+          // Base Sepolia MyOFT contract address
+          export const BASE_SEPOLIA_OFT_ADDRESS = "$EVM_ADDR";
+
+          // ============================================================
+          // LayerZero Endpoint IDs (do not change)
+          // ============================================================
+          export const SOLANA_DEVNET_EID = 40168;
+          export const BASE_SEPOLIA_EID = 40245;
+
+          // ============================================================
+          // Chain Configuration
+          // ============================================================
+          export const CHAINS = {
+            "solana-devnet": {
+              name: "Solana Devnet",
+              eid: SOLANA_DEVNET_EID,
+              rpcUrl: "https://api.devnet.solana.com",
+              explorerUrl: "https://explorer.solana.com",
+              explorerSuffix: "?cluster=devnet",
+              type: "solana" as const,
+              decimals: 9,
+              icon: "/solana.svg",
+            },
+            "base-sepolia": {
+              name: "Base Sepolia",
+              eid: BASE_SEPOLIA_EID,
+              rpcUrl: "https://sepolia.base.org",
+              explorerUrl: "https://sepolia.basescan.org",
+              chainId: 84532,
+              type: "evm" as const,
+              decimals: 18,
+              icon: "/base.svg",
+            },
+          } as const;
+
+          export type ChainKey = keyof typeof CHAINS;
+
+          export const LZ_SCAN_TESTNET = "https://testnet.layerzeroscan.com";
+
+          export const OFT_ABI = [
+            "function name() view returns (string)",
+            "function symbol() view returns (string)",
+            "function decimals() view returns (uint8)",
+            "function balanceOf(address) view returns (uint256)",
+            "function allowance(address owner, address spender) view returns (uint256)",
+            "function approve(address spender, uint256 amount) returns (bool)",
+            "function quoteSend((uint32 dstEid, bytes32 to, uint256 amountLD, uint256 minAmountLD, bytes extraOptions, bytes composeMsg, bytes oftCmd) sendParam, bool payInLzToken) view returns ((uint256 nativeFee, uint256 lzTokenFee) messagingFee)",
+            "function send((uint32 dstEid, bytes32 to, uint256 amountLD, uint256 minAmountLD, bytes extraOptions, bytes composeMsg, bytes oftCmd) sendParam, (uint256 nativeFee, uint256 lzTokenFee) fee, address refundAddress) payable returns ((bytes32 guid, uint64 nonce, uint256 fee) receipt, (uint256 amountSentLD, uint256 amountReceivedLD) oftReceipt)",
+          ];
+          EOF
+
+      - name: Install frontend dependencies
+        run: cd frontend && pnpm install --frozen-lockfile
+
+      - name: Build frontend
+        run: cd frontend && pnpm build
+
+      - name: Update docs/ for GitHub Pages
+        run: |
+          rm -rf docs/_next docs/index.html docs/404.html docs/index.txt
+          cp -r frontend/out/. docs/
+          touch docs/.nojekyll
+
+      - name: Commit and push updated frontend
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/ frontend/src/lib/constants.ts
+          git commit -m "chore: update deployed contract addresses and rebuild frontend
+
+          EVM OFT (Base Sepolia):  ${{ needs.deploy-evm.outputs.evm_address }}
+          Solana Program ID:       ${{ needs.deploy-solana.outputs.program_id }}
+          Solana OFT Store:        ${{ needs.deploy-solana.outputs.oft_store }}
+          Solana Token Mint:       ${{ needs.deploy-solana.outputs.token_mint }}"
+          git push origin main
+
+      - name: Summary
+        run: |
+          echo "### Deployment Complete" >> $GITHUB_STEP_SUMMARY
+          echo "| | Address |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| Base Sepolia OFT | \`${{ needs.deploy-evm.outputs.evm_address }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Solana Program   | \`${{ needs.deploy-solana.outputs.program_id }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Solana OFT Store | \`${{ needs.deploy-solana.outputs.oft_store }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Solana Mint      | \`${{ needs.deploy-solana.outputs.token_mint }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Frontend: https://cool4y.github.io/oft/" >> $GITHUB_STEP_SUMMARY
