@@ -173,9 +173,10 @@ jobs:
           if echo "$INPUT_KEY" | grep -qE '^\['; then
             echo "$INPUT_KEY" > ~/.config/solana/id.json
           else
-            # Convert base58 to JSON array via node
+            # bs58 v6 ships as ESM; the CJS wrapper puts the real object under .default
             node -e "
-              const bs58 = require('./node_modules/bs58');
+              const mod = require('./node_modules/bs58/src/cjs/index.cjs');
+              const bs58 = mod.default || mod;
               const key = bs58.decode('$INPUT_KEY');
               console.log(JSON.stringify(Array.from(key)));
             " > ~/.config/solana/id.json
@@ -270,7 +271,8 @@ jobs:
             echo "$INPUT_KEY" > ~/.config/solana/id.json
           else
             node -e "
-              const bs58 = require('./node_modules/bs58');
+              const mod = require('./node_modules/bs58/src/cjs/index.cjs');
+              const bs58 = mod.default || mod;
               const key = bs58.decode('$INPUT_KEY');
               console.log(JSON.stringify(Array.from(key)));
             " > ~/.config/solana/id.json
