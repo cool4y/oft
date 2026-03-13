@@ -190,9 +190,7 @@ jobs:
       - name: Airdrop SOL for deployment
         run: |
           PUBKEY=$(solana-keygen pubkey)
-          solana airdrop 2 $PUBKEY --url devnet || true
-          sleep 5
-          solana airdrop 2 $PUBKEY --url devnet || true
+          solana airdrop 0.1 $PUBKEY --url devnet || true
           echo "Balance: $(solana balance --url devnet)"
 
       - name: Deploy Anchor program on-chain
