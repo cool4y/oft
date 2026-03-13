@@ -11,7 +11,7 @@ contract MyOFT is OFT {
         address _lzEndpoint,
         address _delegate
     ) OFT(_name, _symbol, _lzEndpoint, _delegate) Ownable(_delegate) {
-        // Uncomment the line below to mint test tokens on deployment (for testnet only)
-        // _mint(msg.sender, 100000 * (10 ** 18));
+        // Mint test tokens on deployment (testnet only - remove before mainnet!)
+        _mint(msg.sender, 100000 * (10 ** 18));
     }
 }
