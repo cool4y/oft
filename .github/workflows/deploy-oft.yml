@@ -101,7 +101,7 @@ jobs:
       # Download pre-built binary — no cargo compile needed
       - name: Install Anchor CLI
         run: |
-          curl -fsSL https://github.com/coral-xyz/anchor/releases/download/v0.31.1/anchor-linux-x86_64 \
+          curl -fsSL https://github.com/coral-xyz/anchor/releases/download/v0.31.1/anchor-0.31.1-x86_64-unknown-linux-gnu \
             -o /usr/local/bin/anchor
           chmod +x /usr/local/bin/anchor
           anchor --version
@@ -150,7 +150,7 @@ jobs:
       # Pre-built binary — avoids any Cargo/edition2024 issues
       - name: Install Anchor CLI
         run: |
-          curl -fsSL https://github.com/coral-xyz/anchor/releases/download/v0.31.1/anchor-linux-x86_64 \
+          curl -fsSL https://github.com/coral-xyz/anchor/releases/download/v0.31.1/anchor-0.31.1-x86_64-unknown-linux-gnu \
             -o /usr/local/bin/anchor
           chmod +x /usr/local/bin/anchor
           anchor --version
