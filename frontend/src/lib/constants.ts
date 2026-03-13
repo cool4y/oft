@@ -2,17 +2,17 @@
 // UPDATE THESE VALUES AFTER DEPLOYMENT
 // ============================================================
 
-// Solana OFT Program ID (from `anchor keys list`)
-export const SOLANA_OFT_PROGRAM_ID = "YOUR_SOLANA_OFT_PROGRAM_ID";
+// Solana OFT Program ID (from junk-id.json keypair)
+export const SOLANA_OFT_PROGRAM_ID = "JD5ype5b3NTRDddDtoqLXHcJcCoBToxs9ZnsKMkFbguD";
 
-// Solana OFT Store address (from `lz:oft:solana:create` output)
-export const SOLANA_OFT_STORE = "YOUR_SOLANA_OFT_STORE_ADDRESS";
+// Solana OFT Store address (from oft-store-keypair.json)
+export const SOLANA_OFT_STORE = "2MEMByRPrhTAZKg8H4jTZKmJnhEhwR5QfJpEWLaQjGEL";
 
-// Solana Token Mint address (from `lz:oft:solana:create` output)
-export const SOLANA_TOKEN_MINT = "YOUR_SOLANA_TOKEN_MINT";
+// Solana Token Mint address (from oft-mint-keypair.json)
+export const SOLANA_TOKEN_MINT = "G8SMyR9tE1SVJUwcjcHRQR7qUe1MyWTVTUTVoEqhDH3W";
 
-// Base Sepolia MyOFT contract address (from `lz:deploy` output)
-export const BASE_SEPOLIA_OFT_ADDRESS = "YOUR_BASE_SEPOLIA_OFT_ADDRESS";
+// Base Sepolia MyOFT contract address (from evm-deployer.json)
+export const BASE_SEPOLIA_OFT_ADDRESS = "0x86d0C60d40B42aDfC8cB5530c34cA753448a577F";
 
 // ============================================================
 // LayerZero Endpoint IDs (do not change)
