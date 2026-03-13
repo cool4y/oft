@@ -216,6 +216,8 @@ jobs:
             --name "${{ inputs.token_name }}" \
             --symbol "${{ inputs.token_symbol }}" \
             --amount ${{ inputs.initial_supply }} \
+            --uri "" \
+            --ci \
             --network solana-devnet 2>&1)
           echo "$OUTPUT"
 
