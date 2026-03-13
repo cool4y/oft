@@ -105,6 +105,10 @@ jobs:
           sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"
           echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
 
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.85'
+
       - name: Install Anchor CLI
         run: |
           cargo install --git https://github.com/coral-xyz/anchor avm --force
@@ -112,8 +116,6 @@ jobs:
           avm use 0.31.1
         env:
           CARGO_NET_GIT_FETCH_WITH_CLI: true
-
-      - uses: dtolnay/rust-toolchain@stable
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
