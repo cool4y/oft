@@ -81,13 +81,55 @@ jobs:
           name: evm-deployments
           path: deployments/
 
-  deploy-solana:
-    name: Deploy OFT on Solana Devnet
+  build-solana:
+    name: Build Anchor Program
     runs-on: ubuntu-latest
+    outputs:
+      program_id: ${{ steps.program_id.outputs.program_id }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Solana CLI
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.85'
+
+      # Download pre-built binary — no cargo compile needed
+      - name: Install Anchor CLI
+        run: |
+          curl -fsSL https://github.com/coral-xyz/anchor/releases/download/v0.31.1/anchor-linux-x86_64 \
+            -o /usr/local/bin/anchor
+          chmod +x /usr/local/bin/anchor
+          anchor --version
+
+      - name: Build Anchor program
+        run: anchor build
+
+      - name: Get program ID
+        id: program_id
+        run: |
+          PROGRAM_ID=$(anchor keys list | grep -oP '[1-9A-HJ-NP-Za-km-z]{32,44}' | head -1)
+          echo "program_id=$PROGRAM_ID" >> $GITHUB_OUTPUT
+          echo "Program ID: $PROGRAM_ID"
+
+      - name: Upload compiled program
+        uses: actions/upload-artifact@v4
+        with:
+          name: anchor-program
+          path: target/deploy/
+
+  deploy-solana:
+    name: Deploy Solana OFT Token
+    runs-on: ubuntu-latest
+    needs: build-solana
     outputs:
       oft_store: ${{ steps.deploy.outputs.oft_store }}
       token_mint: ${{ steps.deploy.outputs.token_mint }}
-      program_id: ${{ steps.deploy.outputs.program_id }}
+      program_id: ${{ needs.build-solana.outputs.program_id }}
     steps:
       - uses: actions/checkout@v4
 
@@ -105,17 +147,19 @@ jobs:
           sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"
           echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: '1.85'
-
+      # Pre-built binary — avoids any Cargo/edition2024 issues
       - name: Install Anchor CLI
         run: |
-          cargo install --git https://github.com/coral-xyz/anchor avm --force
-          avm install 0.31.1
-          avm use 0.31.1
-        env:
-          CARGO_NET_GIT_FETCH_WITH_CLI: true
+          curl -fsSL https://github.com/coral-xyz/anchor/releases/download/v0.31.1/anchor-linux-x86_64 \
+            -o /usr/local/bin/anchor
+          chmod +x /usr/local/bin/anchor
+          anchor --version
+
+      - name: Download compiled program
+        uses: actions/download-artifact@v4
+        with:
+          name: anchor-program
+          path: target/deploy/
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -148,16 +192,19 @@ jobs:
           solana airdrop 2 $PUBKEY --url devnet || true
           echo "Balance: $(solana balance --url devnet)"
 
-      - name: Build Anchor program
-        run: anchor build
+      - name: Deploy Anchor program on-chain
+        run: |
+          PROGRAM_ID="${{ needs.build-solana.outputs.program_id }}"
+          SO_FILE=$(ls target/deploy/*.so | head -1)
+          echo "Deploying $SO_FILE (Program ID: $PROGRAM_ID)"
+          solana program deploy "$SO_FILE" --program-id "$PROGRAM_ID" --url devnet
 
-      - name: Deploy OFT on Solana Devnet
+      - name: Create OFT token
         id: deploy
         env:
           PRIVATE_KEY: ${{ inputs.evm_private_key }}
         run: |
-          PROGRAM_ID=$(anchor keys list 2>/dev/null | grep -oP '[1-9A-HJ-NP-Za-km-z]{32,44}' | head -1)
-          echo "Program ID: $PROGRAM_ID"
+          PROGRAM_ID="${{ needs.build-solana.outputs.program_id }}"
 
           OUTPUT=$(pnpm hardhat lz:oft:solana:create \
             --eid 40168 \
@@ -173,7 +220,6 @@ jobs:
 
           echo "oft_store=$OFT_STORE" >> $GITHUB_OUTPUT
           echo "token_mint=$TOKEN_MINT" >> $GITHUB_OUTPUT
-          echo "program_id=$PROGRAM_ID" >> $GITHUB_OUTPUT
 
           echo "### Solana Devnet OFT" >> $GITHUB_STEP_SUMMARY
           echo "- **Program ID:** \`$PROGRAM_ID\`" >> $GITHUB_STEP_SUMMARY
@@ -184,9 +230,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: solana-deployments
-          path: |
-            deployments/
-            target/deploy/
+          path: deployments/
 
   wire-chains:
     name: Wire EVM <-> Solana
