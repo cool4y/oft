@@ -197,7 +197,8 @@ jobs:
 
       - name: Deploy Anchor program on-chain
         run: |
-          echo "Deploying target/deploy/oft.so"
+          echo "=== target/deploy contents ==="
+          ls -la target/deploy/
           solana program deploy target/deploy/oft.so \
             --program-id target/deploy/oft-keypair.json \
             --url devnet
